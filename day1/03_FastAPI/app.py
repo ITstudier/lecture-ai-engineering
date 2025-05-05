@@ -12,9 +12,8 @@ import nest_asyncio
 from pyngrok import ngrok
 
 # --- 設定 ---
-# モデル名を設定
-MODEL_NAME = "google/gemma-2-2b-jpn-it"  # お好みのモデルに変更可能です
-print(f"モデル名を設定: {MODEL_NAME}")
+MODEL_NAME = "google/gemma-2-2b-jpn-it"
+print(f"\u30e2\u30c7\u30eb\u540d\u3092\u8a2d\u5b9a: {MODEL_NAME}")
 
 # --- モデル設定クラス ---
 class Config:
@@ -25,12 +24,11 @@ config = Config(MODEL_NAME)
 
 # --- FastAPIアプリケーション定義 ---
 app = FastAPI(
-    title="ローカルLLM APIサービス",
-    description="transformersモデルを使用したテキスト生成のためのAPI",
+    title="\u30ed\u30fc\u30ab\u30ebLLM API\u30b5\u30fc\u30d3\u30b9",
+    description="transformers\u30e2\u30c7\u30eb\u3092\u4f7f\u7528\u3057\u305f\u30c6\u30ad\u30b9\u30c8\u751f\u6210\u306e\u305f\u3081\u306eAPI",
     version="1.0.0"
 )
 
-# CORSミドルウェアを追加
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,7 +42,6 @@ class Message(BaseModel):
     role: str
     content: str
 
-# 直接プロンプトを使用した簡略化されたリクエスト
 class SimpleGenerationRequest(BaseModel):
     prompt: str
     max_new_tokens: Optional[int] = 512
@@ -57,122 +54,93 @@ class GenerationResponse(BaseModel):
     response_time: float
 
 # --- モデル関連の関数 ---
-# モデルのグローバル変数
 model = None
 
 def load_model():
-    """推論用のLLMモデルを読み込む"""
-    global model  # グローバル変数を更新するために必要
+    global model
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"使用デバイス: {device}")
+        print(f"\u4f7f\u7528\u30c7\u30d0\u30a4\u30b9: {device}")
         pipe = pipeline(
             "text-generation",
             model=config.MODEL_NAME,
-            model_kwargs={"torch_dtype": torch.bfloat16},
-            device=device
+            model_kwargs={
+                "torch_dtype": torch.bfloat16,
+                "device_map": "auto" if device == "cuda" else None
+            }
         )
-        print(f"モデル '{config.MODEL_NAME}' の読み込みに成功しました")
-        model = pipe  # グローバル変数を更新
+        model = pipe
+        print(f"\u2705 \u30e2\u30c7\u30eb '{config.MODEL_NAME}' \u306e\u8aad\u307f\u8fbc\u307f\u306b\u6210\u529f\u3057\u307e\u3057\u305f")
         return pipe
     except Exception as e:
-        error_msg = f"モデル '{config.MODEL_NAME}' の読み込みに失敗: {e}"
-        print(error_msg)
-        traceback.print_exc()  # 詳細なエラー情報を出力
+        print(f"\u274c \u30e2\u30c7\u30eb\u306e\u8aad\u307f\u8fbc\u307f\u5931\u6557: {e}")
+        traceback.print_exc()
         return None
 
 def extract_assistant_response(outputs, user_prompt):
-    """モデルの出力からアシスタントの応答を抽出する"""
     assistant_response = ""
     try:
         if outputs and isinstance(outputs, list) and len(outputs) > 0 and outputs[0].get("generated_text"):
             generated_output = outputs[0]["generated_text"]
-            
-            if isinstance(generated_output, list):
-                # メッセージフォーマットの場合
-                if len(generated_output) > 0:
-                    last_message = generated_output[-1]
-                    if isinstance(last_message, dict) and last_message.get("role") == "assistant":
-                        assistant_response = last_message.get("content", "").strip()
-                    else:
-                        # 予期しないリスト形式の場合は最後の要素を文字列として試行
-                        print(f"警告: 最後のメッセージの形式が予期しないリスト形式です: {last_message}")
-                        assistant_response = str(last_message).strip()
-
-            elif isinstance(generated_output, str):
-                # 文字列形式の場合
-                full_text = generated_output
-                
-                # 単純なプロンプト入力の場合、プロンプト後の全てを抽出
+            if isinstance(generated_output, str):
                 if user_prompt:
-                    prompt_end_index = full_text.find(user_prompt)
+                    prompt_end_index = generated_output.find(user_prompt)
                     if prompt_end_index != -1:
                         prompt_end_pos = prompt_end_index + len(user_prompt)
-                        assistant_response = full_text[prompt_end_pos:].strip()
+                        assistant_response = generated_output[prompt_end_pos:].strip()
                     else:
-                        # 元のプロンプトが見つからない場合は、生成されたテキストをそのまま返す
-                        assistant_response = full_text
+                        assistant_response = generated_output
                 else:
-                    assistant_response = full_text
+                    assistant_response = generated_output
+            elif isinstance(generated_output, list):
+                last_message = generated_output[-1]
+                if isinstance(last_message, dict) and last_message.get("role") == "assistant":
+                    assistant_response = last_message.get("content", "").strip()
+                else:
+                    assistant_response = str(last_message).strip()
             else:
-                print(f"警告: 予期しない出力タイプ: {type(generated_output)}")
-                assistant_response = str(generated_output).strip()  # 文字列に変換
-
+                assistant_response = str(generated_output).strip()
     except Exception as e:
-        print(f"応答の抽出中にエラーが発生しました: {e}")
+        print(f"\u5fdc\u7b54\u306e\u62bd\u51fa\u4e2d\u306b\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f: {e}")
         traceback.print_exc()
-        assistant_response = "応答の抽出に失敗しました。"  # エラーメッセージを設定
+        assistant_response = "\u5fdc\u7b54\u306e\u62bd\u51fa\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002"
 
     if not assistant_response:
-        print("警告: アシスタントの応答を抽出できませんでした。完全な出力:", outputs)
-        # デフォルトまたはエラー応答を返す
-        assistant_response = "応答を生成できませんでした。"
+        print("\u8b66\u544a: \u30a2\u30b7\u30b9\u30bf\u30f3\u30c8\u306e\u5fdc\u7b54\u3092\u62bd\u51fa\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002\u5b8c\u5168\u306a\u51fa\u529b:", outputs)
+        assistant_response = "\u5fdc\u7b54\u3092\u751f\u6210\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
 
     return assistant_response
 
-# --- FastAPIエンドポイント定義 ---
 @app.on_event("startup")
 async def startup_event():
-    """起動時にモデルを初期化"""
-    load_model_task()  # バックグラウンドではなく同期的に読み込む
+    print("\ud83d\udce6 \u30e2\u30c7\u30eb\u3092\u8d77\u52d5\u6642\u306b\u521d\u671f\u5316\u4e2d...")
+    load_model_task()
     if model is None:
-        print("警告: 起動時にモデルの初期化に失敗しました")
+        print("\u26a0\ufe0f \u8d77\u52d5\u6642\u306b\u30e2\u30c7\u30eb\u521d\u671f\u5316\u306b\u5931\u6557\u3057\u307e\u3057\u305f")
     else:
-        print("起動時にモデルの初期化が完了しました。")
+        print("\u2705 \u8d77\u52d5\u6642\u306b\u30e2\u30c7\u30eb\u306e\u521d\u671f\u5316\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f")
 
 @app.get("/")
 async def root():
-    """基本的なAPIチェック用のルートエンドポイント"""
     return {"status": "ok", "message": "Local LLM API is runnning"}
 
 @app.get("/health")
 async def health_check():
-    """ヘルスチェックエンドポイント"""
     global model
     if model is None:
         return {"status": "error", "message": "No model loaded"}
-
     return {"status": "ok", "model": config.MODEL_NAME}
 
-# 簡略化されたエンドポイント
 @app.post("/generate", response_model=GenerationResponse)
 async def generate_simple(request: SimpleGenerationRequest):
-    """単純なプロンプト入力に基づいてテキストを生成"""
     global model
-
     if model is None:
-        print("generateエンドポイント: モデルが読み込まれていません。読み込みを試みます...")
-        load_model_task()  # 再度読み込みを試みる
+        print("generate\u30a8\u30f3\u30c9\u30dd\u30a4\u30f3\u30c8: \u30e2\u30c7\u30eb\u304c\u8aad\u307f\u8fbc\u307e\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u8aad\u307f\u8fbc\u307f\u3092\u8a66\u307f\u307e\u3059...")
+        load_model_task()
         if model is None:
-            print("generateエンドポイント: モデルの読み込みに失敗しました。")
-            raise HTTPException(status_code=503, detail="モデルが利用できません。後でもう一度お試しください。")
-
+            raise HTTPException(status_code=503, detail="\u30e2\u30c7\u30eb\u304c\u5229\u7528\u3067\u304d\u307e\u305b\u3093\u3002")
     try:
         start_time = time.time()
-        print(f"シンプルなリクエストを受信: prompt={request.prompt[:100]}..., max_new_tokens={request.max_new_tokens}")  # 長いプロンプトは切り捨て
-
-        # プロンプトテキストで直接応答を生成
-        print("モデル推論を開始...")
         outputs = model(
             request.prompt,
             max_new_tokens=request.max_new_tokens,
@@ -180,105 +148,56 @@ async def generate_simple(request: SimpleGenerationRequest):
             temperature=request.temperature,
             top_p=request.top_p,
         )
-        print("モデル推論が完了しました。")
-
-        # アシスタント応答を抽出
         assistant_response = extract_assistant_response(outputs, request.prompt)
-        print(f"抽出されたアシスタント応答: {assistant_response[:100]}...")  # 長い場合は切り捨て
-
-        end_time = time.time()
-        response_time = end_time - start_time
-        print(f"応答生成時間: {response_time:.2f}秒")
-
+        response_time = time.time() - start_time
         return GenerationResponse(
             generated_text=assistant_response,
             response_time=response_time
         )
-
     except Exception as e:
-        print(f"シンプル応答生成中にエラーが発生しました: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"応答の生成中にエラーが発生しました: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"\u5fdc\u7b54\u306e\u751f\u6210\u4e2d\u306b\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f: {str(e)}")
 
 def load_model_task():
-    """モデルを読み込むバックグラウンドタスク"""
     global model
-    print("load_model_task: モデルの読み込みを開始...")
-    # load_model関数を呼び出し、結果をグローバル変数に設定
+    print("load_model_task: \u30e2\u30c7\u30eb\u306e\u8aad\u307f\u8fbc\u307f\u3092\u958b\u59cb...")
     loaded_pipe = load_model()
     if loaded_pipe:
-        model = loaded_pipe  # グローバル変数を更新
-        print("load_model_task: モデルの読み込みが完了しました。")
+        model = loaded_pipe
+        print("load_model_task: \u30e2\u30c7\u30eb\u306e\u8aad\u307f\u8fbc\u307f\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f")
     else:
-        print("load_model_task: モデルの読み込みに失敗しました。")
+        print("load_model_task: \u30e2\u30c7\u30eb\u306e\u8aad\u307f\u8fbc\u307f\u306b\u5931\u6557\u3057\u307e\u3057\u305f")
 
-print("FastAPIエンドポイントを定義しました。")
+print("FastAPI\u30a8\u30f3\u30c9\u30dd\u30a4\u30f3\u30c8\u3092\u5b9a\u7fa9\u3057\u307e\u3057\u305f\u3002")
 
-# --- ngrokでAPIサーバーを実行する関数 ---
 def run_with_ngrok(port=8501):
-    """ngrokでFastAPIアプリを実行"""
     nest_asyncio.apply()
-
     ngrok_token = os.environ.get("NGROK_TOKEN")
     if not ngrok_token:
-        print("Ngrok認証トークンが'NGROK_TOKEN'環境変数に設定されていません。")
-        try:
-            print("Colab Secrets(左側の鍵アイコン)で'NGROK_TOKEN'を設定することをお勧めします。")
-            ngrok_token = input("Ngrok認証トークンを入力してください (https://dashboard.ngrok.com/get-started/your-authtoken): ")
-        except EOFError:
-            print("\nエラー: 対話型入力が利用できません。")
-            print("Colab Secretsを使用するか、ノートブックセルで`os.environ['NGROK_TOKEN'] = 'あなたのトークン'`でトークンを設定してください")
-            return
-
-    if not ngrok_token:
-        print("エラー: Ngrok認証トークンを取得できませんでした。中止します。")
+        print("Ngrok\u8a8d\u8a3c\u30c8\u30fc\u30af\u30f3\u304c'NGROK_TOKEN'\u74b0\u5883\u5909\u6570\u306b\u8a2d\u5b9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002")
         return
-
     try:
         ngrok.set_auth_token(ngrok_token)
-
-        # 既存のngrokトンネルを閉じる
-        try:
-            tunnels = ngrok.get_tunnels()
-            if tunnels:
-                print(f"{len(tunnels)}個の既存トンネルが見つかりました。閉じています...")
-                for tunnel in tunnels:
-                    print(f"  - 切断中: {tunnel.public_url}")
-                    ngrok.disconnect(tunnel.public_url)
-                print("すべての既存ngrokトンネルを切断しました。")
-            else:
-                print("アクティブなngrokトンネルはありません。")
-        except Exception as e:
-            print(f"トンネル切断中にエラーが発生しました: {e}")
-            # エラーにもかかわらず続行を試みる
-
-        # 新しいngrokトンネルを開く
-        print(f"ポート{port}に新しいngrokトンネルを開いています...")
-        ngrok_tunnel = ngrok.connect(port)
-        public_url = ngrok_tunnel.public_url
-        print("---------------------------------------------------------------------")
-        print(f"✅ 公開URL:   {public_url}")
-        print(f"📖 APIドキュメント (Swagger UI): {public_url}/docs")
-        print("---------------------------------------------------------------------")
-        print("(APIクライアントやブラウザからアクセスするためにこのURLをコピーしてください)")
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")  # ログレベルをinfoに設定
-
+        tunnels = ngrok.get_tunnels()
+        for tunnel in tunnels:
+            ngrok.disconnect(tunnel.public_url)
+        print(f"\u30dd\u30fc\u30c8{port}\u306b\u65b0\u3057\u3044ngrok\u30c8\u30f3\u30cd\u30eb\u3092\u958b\u3044\u3066\u3044\u307e\u3059...")
+        public_url = ngrok.connect(port).public_url
+        print("-" * 69)
+        print(f"\u2705 \u516c\u958bURL:   {public_url}")
+        print(f"\ud83d\udcd6 API\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8: {public_url}/docs")
+        print("-" * 69)
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
     except Exception as e:
-        print(f"\n ngrokまたはUvicornの起動中にエラーが発生しました: {e}")
+        print(f"\n ngrok\u307e\u305f\u306fUvicorn\u306e\u8d77\u52d5\u4e2d\u306b\u30a8\u30e9\u30fc: {e}")
         traceback.print_exc()
-        # エラー後に残る可能性のあるngrokトンネルを閉じようとする
         try:
-            print("エラーにより残っている可能性のあるngrokトンネルを閉じています...")
             tunnels = ngrok.get_tunnels()
             for tunnel in tunnels:
                 ngrok.disconnect(tunnel.public_url)
-            print("ngrokトンネルを閉じました。")
         except Exception as ne:
-            print(f"ngrokトンネルのクリーンアップ中に別のエラーが発生しました: {ne}")
+            print(f"ngrok\u30af\u30ea\u30fc\u30f3\u30a2\u30c3\u30d7\u4e2d\u306b\u30a8\u30e9\u30fc: {ne}")
 
-# --- メイン実行ブロック ---
 if __name__ == "__main__":
-    # 指定されたポートでサーバーを起動
-    run_with_ngrok(port=8501)  # このポート番号を確認
-    # run_with_ngrokが終了したときにメッセージを表示
-    print("\nサーバープロセスが終了しました。")
+    run_with_ngrok(port=8501)
+    print("\n\u30b5\u30fc\u30d0\u30fc\u30d7\u30ed\u30bb\u30b9\u304c\u7d42\u4e86\u3057\u307e\u3057\u305f\u3002")
